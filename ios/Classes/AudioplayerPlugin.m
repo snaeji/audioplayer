@@ -2,6 +2,9 @@
 #import <UIKit/UIKit.h>
 #import <AVKit/AVKit.h>
 #import <AVFoundation/AVFoundation.h>
+#import <MediaPlayer/MediaPlayer.h>
+
+
 
 static NSString *const CHANNEL_NAME = @"bz.rxla.flutter/audio";
 static FlutterMethodChannel *channel;
@@ -9,12 +12,13 @@ static AVPlayer *player;
 static AVPlayerItem *playerItem;
 
 @interface AudioplayerPlugin()
--(void)pause;
+-(MPRemoteCommandHandlerStatus)pause;
 -(void)stop;
 -(void)mute:(BOOL)muted;
 -(void)seek:(CMTime)time;
 -(void)onStart;
 -(void)onTimeInterval:(CMTime)time;
+-(MPRemoteCommandHandlerStatus)resume;
 @end
 
 @implementation AudioplayerPlugin
@@ -30,7 +34,7 @@ FlutterMethodChannel *_channel;
     FlutterMethodChannel* channel = [FlutterMethodChannel
                                      methodChannelWithName:CHANNEL_NAME
                                      binaryMessenger:[registrar messenger]];
-    AudioplayerPlugin* instance = [[AudioplayerPlugin alloc] init];
+    AudioplayerPlugin* instance = [[SwiftAudioplayerPlugin alloc] init];
     [registrar addMethodCallDelegate:instance channel:channel];
     _channel = channel;
 }
@@ -90,6 +94,8 @@ FlutterMethodChannel *_channel;
             playerItem = [[AVPlayerItem alloc] initWithURL:[NSURL fileURLWithPath:url]];
         } else {
             playerItem = [[AVPlayerItem alloc] initWithURL:[NSURL URLWithString:url]];
+            [self register];
+            //TODO: !
         }
         lastUrl = url;
         
@@ -127,6 +133,42 @@ FlutterMethodChannel *_channel;
     isPlaying = true;
 }
 
+- (void)register {
+    
+    // Get your app's audioSession singleton object
+     AVAudioSession *session = [AVAudioSession sharedInstance];
+
+     // Error handling
+     BOOL success;
+     NSError *error;
+
+     // set the audioSession category.
+     // Needs to be Record or PlayAndRecord to use audioRouteOverride:
+
+     success = [session setCategory:AVAudioSessionCategoryPlayback
+                              error:&error];
+
+    if (!success) {
+        NSLog(@"AVAudioSession error setting category:%@",error);
+    }
+
+
+     // Activate the audio session
+     success = [session setActive:YES error:&error];
+     if (!success) {
+         NSLog(@"AVAudioSession error activating: %@",error);
+     }
+     else {
+          NSLog(@"AudioSession active");
+     }
+    
+   MPRemoteCommandCenter* center = [MPRemoteCommandCenter sharedCommandCenter];
+   center.playCommand.enabled = true;
+   center.pauseCommand.enabled = true;
+   [center.playCommand addTarget:self action:@selector(resume)];
+   [center.pauseCommand addTarget:self action:@selector(pause)];
+}
+
 - (void)onStart {
     CMTime duration = [[player currentItem] duration];
     if (CMTimeGetSeconds(duration) > 0) {
@@ -140,10 +182,22 @@ FlutterMethodChannel *_channel;
     [_channel invokeMethod:@"audio.onCurrentPosition" arguments:@(mseconds)];
 }
 
-- (void)pause {
+- (MPRemoteCommandHandlerStatus)pause {
     [player pause];
     isPlaying = false;
     [_channel invokeMethod:@"audio.onPause" arguments:nil];
+    return MPRemoteCommandHandlerStatusSuccess;
+}
+
+- (MPRemoteCommandHandlerStatus)resume {
+    [player play];
+    isPlaying = true;
+    CMTime duration = [[player currentItem] duration];
+    if (CMTimeGetSeconds(duration) > 0) {
+        int mseconds= CMTimeGetSeconds(duration)*1000;
+        [_channel invokeMethod:@"audio.onStart" arguments:@(mseconds)];
+    }
+    return MPRemoteCommandHandlerStatusSuccess;
 }
 
 - (void)stop {
